@@ -18,6 +18,8 @@
 #include <QFile>
 #include <QTextStream>
 #include <QMutex>
+#include <vector>
+#include <QMetaType>
 
 
 #define VENDOR_ID   0x3208
@@ -31,8 +33,6 @@ static libusb_context *usbContext = nullptr;
 static libusb_device_handle *usbHandle = nullptr;
 
 static int ret;
-
-
 
 float movDist = 0;
 
@@ -55,8 +55,9 @@ static QThread *HelperThread = new QThread;
 
 static CAN_Reader *CAN_Rdr = new CAN_Reader;
 static CAN_Writer *CAN_Wrtr = new CAN_Writer;
-
 static CAN_Helper *CAN_Hlpr = new CAN_Helper;
+
+QTimer *checkTmr = new QTimer;
 
 
 //************ MainWindow ***************
@@ -68,25 +69,29 @@ MainWindow::MainWindow(QWidget *parent) :
 
   ui->Read_btn -> setEnabled(false);
 
+  qRegisterMetaType<QVector<uchar> >("QVector<uchar>");
+
   //  -------------
   connect(this, SIGNAL(startReading()), CAN_Rdr, SLOT(readCanFlow()));
   connect(this, SIGNAL(moveMsgPassing(float)), CAN_Wrtr, SLOT(moveMsgToCan(float)));
 
-  connect(CAN_Rdr, SIGNAL(readResPassing(unsigned char*, QString)), this, SLOT(canToGui(unsigned char*, QString)));
+  connect(CAN_Rdr, SIGNAL(readResPassing(QVector<uchar>, QString)), this, SLOT(logToGui(QVector<uchar>, QString)));
   connect(CAN_Rdr, SIGNAL(readErrPassing(QString)), this, SLOT(readErrToGui(QString)));
   connect(CAN_Rdr, SIGNAL(moveMsgPassing(float)), CAN_Wrtr, SLOT(moveMsgToCan(float)));
 
-  connect(CAN_Wrtr, SIGNAL(readResPassing(unsigned char*, QString)), this, SLOT(canToGui(unsigned char*, QString)));
+  connect(CAN_Wrtr, SIGNAL(readResPassing(QVector<uchar>, QString)), this, SLOT(logToGui(QVector<uchar>, QString)));
   connect(CAN_Wrtr, SIGNAL(writeErrPassing(QString)), this, SLOT(writeErrToGui(QString)));
 
   connect(CAN_Rdr, SIGNAL(restartReading()), CAN_Hlpr, SLOT(execRestartReading()));
   connect(CAN_Hlpr, SIGNAL(readAgain()), CAN_Rdr, SLOT(readCanFlow()));
 
+  connect(checkTmr, SIGNAL(timeout()), CAN_Rdr, SLOT(sendFirstData()));
   //  -------------
+
+  checkTmr->start(2);
 
   CAN_Rdr -> moveToThread(ReaderThread);
   CAN_Wrtr -> moveToThread(WriterThread);
-
   CAN_Hlpr -> moveToThread(HelperThread);
 
   ReaderThread->start();
@@ -203,7 +208,7 @@ void MainWindow::on_pbT_Pos_clicked()
 }
 
 
-void MainWindow::canToGui(unsigned char* _resBuf, QString _msgColor = "black")
+void MainWindow::logToGui(QVector<uchar> _resBuf, QString _msgColor = "black")
 {
   static UINT64 cntr = 0;
 
@@ -213,23 +218,29 @@ void MainWindow::canToGui(unsigned char* _resBuf, QString _msgColor = "black")
   QString CanIdStr = "";
   QString CanIdRes    = "";
 
-  CanIdHex = ((_resBuf[7] << 24)  | (_resBuf[6] << 16) | (_resBuf[5] << 8) | (_resBuf[4]));
+  checkTmr->stop();
 
-  CanIdStr = QString("%1").arg( CanIdHex, 8, 16, QChar('0')).toUpper() + "  ";
-
-  for(int i = 0; i<7; i=i+2)
+  if(!_resBuf.empty())
     {
-      CanIdRes = CanIdRes + QString(CanIdStr[i]) + QString(CanIdStr[i+1]) + " ";
+      CanIdHex = ((_resBuf.at(7) << 24)  | (_resBuf.at(6) << 16) | (_resBuf.at(5) << 8) | (_resBuf.at(4)));
+
+      CanIdStr = QString("%1").arg( CanIdHex, 8, 16, QChar('0')).toUpper() + "  ";
+
+      for(int i = 0; i<7; i=i+2)
+        {
+          CanIdRes = CanIdRes + QString(CanIdStr[i]) + QString(CanIdStr[i+1]) + " ";
+        }
+
+      for(int dataCount = 8; dataCount < READING_DATA_SIZE; dataCount++)
+        {
+          CanDataStr = CanDataStr + " " + QString("%1").arg(_resBuf.at(dataCount), 2, 16, QChar('0')).toUpper();
+        }
+
+      CanTimeStamp = "    " + QString("%1").arg(_resBuf.at(3), 2, 16, QChar('0')).toUpper() + " " + QString("%1").arg(_resBuf.at(2), 2, 16, QChar('0')).toUpper();
+
+      ui->textBrowser->append("<font color = #6F646D> " + QString::number(cntr++) + " . " + "</font color><b><font color = '" + _msgColor + "'>" + CanIdRes + " .. " + CanDataStr + "</font color></b><font color = #6F646D> .. " + CanTimeStamp + "</font color>\n");
     }
-
-  for(int dataCount = 8; dataCount < READING_DATA_SIZE; dataCount++)
-    {
-      CanDataStr = CanDataStr + " " + QString("%1").arg(_resBuf[dataCount], 2, 16, QChar('0')).toUpper();
-    }
-
-  CanTimeStamp = "    " + QString("%1").arg(_resBuf[3], 2, 16, QChar('0')).toUpper() + " " + QString("%1").arg(_resBuf[2], 2, 16, QChar('0')).toUpper();
-
-  ui->textBrowser->append("<font color = #6F646D> " + QString::number(cntr++) + " . " + "</font color><b><font color = '" + _msgColor + "'>" + CanIdRes + " .. " + CanDataStr + "</font color></b><font color = #6F646D> .. " + CanTimeStamp + "</font color>\n");
+  checkTmr->start(2);
 }
 
 
@@ -284,6 +295,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
 void CAN_Reader::readCanFlow()
 {
   unsigned char readBuf[USB_DATA_SIZE];
+
+  QVector<uchar> tmpVec(USB_DATA_SIZE);
+
   int readRes = -1;
 
   //-----------------------
@@ -291,13 +305,24 @@ void CAN_Reader::readCanFlow()
   //-----------------------
   if(usbHandle != nullptr)
     {
-      readRes = libusb_interrupt_transfer(usbHandle, 0x82, readBuf, sizeof(readBuf), &ret, 5000); // читаем из USB
+      readRes = libusb_interrupt_transfer(usbHandle, 0x82, readBuf, USB_DATA_SIZE, &ret, 5000); // читаем из USB
 
       if((readRes >(-1)) /*&& (ret <= USB_DATA_SIZE)*/)// если чтение идёт нормально
         {
           if(doLogging == true)
             {
-              emit readResPassing(readBuf, "black"); // то передаем результат чтения на вывод
+              //** set font black color **
+              readBuf[16] = 0x00;
+              readBuf[17] = 0x00;
+              readBuf[18] = 0x00;
+              //**************************
+
+              for(int i = 0; i < USB_DATA_SIZE; i++)
+                {
+                  tmpVec[i] = readBuf[i];
+                }
+
+              readOutBuff.append(tmpVec); // пишем прочитанные данные в буферный список, чтобы GUI мог неспеша их разобрать
             }
 
           if(doBidir == true)
@@ -323,6 +348,18 @@ void CAN_Reader::readCanFlow()
     }
 }
 
+void CAN_Reader::sendFirstData()
+{
+  QVector<uchar> tmpVec;
+  if(readOutBuff.count() > 0)
+    {
+      tmpVec = readOutBuff.takeFirst();
+
+      emit readResPassing(tmpVec, "black"); // то передаем результат чтения на вывод
+    }
+}
+
+
 void CAN_Helper::execRestartReading()
 {
   emit readAgain();
@@ -335,7 +372,9 @@ void CAN_Writer::moveMsgToCan(float _pos)
   int64_t dist;
   int writeRes = -1;
 
-  unsigned char writeBuf[USB_DATA_SIZE];
+  uchar writeBuf[USB_DATA_SIZE];
+
+  QVector<uchar> tmpVec(USB_DATA_SIZE);
 
   if(usbHandle != nullptr)
     {
@@ -381,7 +420,12 @@ void CAN_Writer::moveMsgToCan(float _pos)
 
       if(doLogging == true)
         {
-          emit readResPassing(writeBuf, "#4BC54E"); // передаем отправленную команду на вывод в GUI
+          for(int i = 0; i < USB_DATA_SIZE; i++)
+            {
+              tmpVec[i] = writeBuf[i];
+            }
+
+          emit readResPassing(tmpVec, "#4BC54E"); // передаем отправленную команду на вывод в GUI
         }
 
       if(writeRes < 0)

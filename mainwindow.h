@@ -4,6 +4,10 @@
 #include <QMainWindow>
 #include <QEvent>
 #include <QMetaEnum>
+#include <vector>
+#include <QMetaType>
+
+typedef std::vector<unsigned char> uschar;
 
 namespace Ui {
   class MainWindow;
@@ -36,7 +40,7 @@ private slots:
   void on_cb_Logging_stateChanged(int arg1);
 
 public slots:
-  void canToGui(unsigned char*, QString);
+  void logToGui(QVector<uchar>, QString);
   void readErrToGui(QString r_err);
   void writeErrToGui(QString);
 
@@ -48,8 +52,11 @@ class CAN_Reader : public QObject
 {
   Q_OBJECT
 
+public:
+  QList<QVector<unsigned char> > readOutBuff;
+
 signals:
-  void readResPassing(unsigned char*, QString);
+  void readResPassing(QVector<uchar>, QString);
   void readErrPassing(QString);
   void moveMsgPassing(float);
 
@@ -57,6 +64,7 @@ signals:
 
 public slots:
   void readCanFlow();
+  void sendFirstData();
 };
 
 
@@ -65,7 +73,7 @@ class CAN_Writer : public QObject
   Q_OBJECT
 
 signals:
-  void readResPassing(unsigned char*, QString);
+  void readResPassing(QVector<uchar>, QString);
   void writeErrPassing(QString);
 
 public slots:
