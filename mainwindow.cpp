@@ -57,6 +57,7 @@ static QTimer *hlprCheckTmr = new QTimer(0);
 
 static QList<QVector<uchar> > *readList = new QList<QVector<uchar> >;
 
+
 //************ < MainWindow > ***************
 MainWindow::MainWindow(QWidget *parent) :
   QMainWindow(parent),
