@@ -4,10 +4,12 @@
 #include <QMainWindow>
 #include <QEvent>
 #include <QMetaEnum>
-#include <vector>
+#include <QVector>
 #include <QMetaType>
 
-typedef std::vector<unsigned char> uschar;
+//typedef QVector<uchar> QVector<uchar>;
+
+Q_DECLARE_METATYPE(QVector<uchar>)
 
 namespace Ui {
   class MainWindow;
@@ -28,6 +30,7 @@ private:
 signals:
   void startReading();
   void moveMsgPassing(float);
+  void giveFirstData();
 
 private slots:
   void on_Connect_btn_clicked();
@@ -40,7 +43,7 @@ private slots:
   void on_cb_Logging_stateChanged(int arg1);
 
 public slots:
-  void logToGui(QVector<uchar>, QString);
+  void logToGui(QString);
   void readErrToGui(QString r_err);
   void writeErrToGui(QString);
 
@@ -52,19 +55,14 @@ class CAN_Reader : public QObject
 {
   Q_OBJECT
 
-public:
-  QList<QVector<unsigned char> > readOutBuff;
-
 signals:
-  void readResPassing(QVector<uchar>, QString);
   void readErrPassing(QString);
   void moveMsgPassing(float);
-
+  void sendDataToList(QVector<uchar>);
   void restartReading();
 
 public slots:
   void readCanFlow();
-  void sendFirstData();
 };
 
 
@@ -73,22 +71,34 @@ class CAN_Writer : public QObject
   Q_OBJECT
 
 signals:
-  void readResPassing(QVector<uchar>, QString);
   void writeErrPassing(QString);
 
 public slots:
   void moveMsgToCan(float);
 };
 
+
+
 class CAN_Helper : public QObject
 {
   Q_OBJECT
-
 signals:
-  void readAgain();
+  void sendDataFromList(QString);
 
 public slots:
-  void execRestartReading();
+  void writeDataToList(QVector<uchar>);
+  void checkList();
+};
+
+
+class CAN_ReadTrigger : public QObject
+{
+  Q_OBJECT
+signals:
+  void sigRestartReading();
+
+public slots:
+  void slotRestartReading();
 };
 
 
